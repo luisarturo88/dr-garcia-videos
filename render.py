@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Renderizador gratuito de videos del Dr. Luis Arturo García. v3
-Entrada: job.json  ->  Salida: video.mp4
+Renderizador gratuito de videos del Dr. Luis Arturo García.
+Entrada: job.json  ->  Salida: out.mp4
   {
     "id": "V012",
-    "orientation": "vertical" (shorts 3min)  |  "horizontal" (medio 12-15min y masterclass ~30min)
-    "formato": "short" | "medio" | "masterclass",
+    "orientation": "vertical" | "horizontal",
     "voice": "es-EC-LuisNeural",
     "blog_url": "veterinarioluis.com",
     "scenes": [{"text": "...", "image_url": "https://..."}, ...]
   }
 Usa: edge-tts (voz neuronal gratis), ffmpeg, Pillow.
 """
-import asyncio, json, os, subprocess, sys, textwrap, urllib.request, shutil
+import asyncio, json, os, subprocess, sys, textwrap, urllib.request, shutil, math
 
 FAKE_TTS = os.environ.get("FAKE_TTS") == "1"
 W_V, H_V = 1080, 1920
@@ -147,42 +146,30 @@ def make_overlay(W, H, blog, path):
 
 def main(job_path, out_path):
     job = json.load(open(job_path, encoding="utf-8"))
-    formato = job.get("formato", "short")
     vertical = job.get("orientation", "vertical") == "vertical"
     W, H = (W_V, H_V) if vertical else (W_H, H_H)
-    fps = 30 if vertical else 24
-    # presets de codificacion: masterclass usa ultrafast en clips para caber en el tiempo del runner
-    if formato == "masterclass":
-        preset_scene, preset_final, crf_final = "ultrafast", "veryfast", "22"
-        zoom_max = 1.10
-    elif formato == "medio":
-        preset_scene, preset_final, crf_final = "veryfast", "veryfast", "21"
-        zoom_max = 1.12
-    else:
-        preset_scene, preset_final, crf_final = "veryfast", "medium", "21"
-        zoom_max = 1.12
     voice = job.get("voice", "es-EC-LuisNeural")
     blog = job.get("blog_url", "veterinarioluis.com")
     tmp = "work"
     shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)
 
-    all_words, clips, t0 = [], [], 0.0
+    all_words, clips, audios, t0 = [], [], [], 0.0
     for i, sc in enumerate(job["scenes"]):
         img = f"{tmp}/img{i}.jpg"; mp3 = f"{tmp}/a{i}.mp3"; clip = f"{tmp}/c{i}.mp4"
         req = urllib.request.Request(sc["image_url"], headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=90) as r, open(img, "wb") as f:
+        with urllib.request.urlopen(req, timeout=60) as r, open(img, "wb") as f:
             f.write(r.read())
         words = tts(sc["text"], voice, mp3)
         d = dur(mp3) + 0.25
         all_words += [(a + t0, b + t0, w) for a, b, w in words]
         t0 += d
-        frames = int(d * fps)
+        frames = int(d * 30)
         # imagen que llena toda la pantalla (cover) + zoom lento (Ken Burns)
         vf = (f"scale={W*2}:{H*2}:force_original_aspect_ratio=increase,crop={W*2}:{H*2},"
-              f"zoompan=z='min(1+0.0008*on,{zoom_max})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={W}x{H}:fps={fps},"
+              f"zoompan=z='min(1+0.0009*on,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={W}x{H}:fps=30,"
               f"format=yuv420p")
         sh(["ffmpeg", "-y", "-loop", "1", "-i", img, "-i", mp3, "-vf", vf, "-af", "apad",
-            "-t", f"{d:.2f}", "-c:v", "libx264", "-preset", preset_scene, "-crf", "21",
+            "-t", f"{d:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
             "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2", clip])
         clips.append(clip)
 
@@ -196,9 +183,9 @@ def main(job_path, out_path):
     make_overlay(W, H, blog, f"{tmp}/overlay.png")
     sh(["ffmpeg", "-y", "-i", joined, "-i", f"{tmp}/overlay.png",
         "-filter_complex", f"[0:v][1:v]overlay=0:0,ass={tmp}/subs.ass[v]",
-        "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-preset", preset_final, "-crf", crf_final,
+        "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-preset", "medium", "-crf", "21",
         "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", out_path])
-    print(json.dumps({"ok": True, "formato": formato, "duration": round(dur(out_path), 2), "file": out_path}))
+    print(json.dumps({"ok": True, "duration": round(dur(out_path), 2), "file": out_path}))
 
 
 if __name__ == "__main__":
