@@ -1,0 +1,34 @@
+name: render
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "ID unico del video (se usa como etiqueta del release)"
+        required: true
+      job:
+        description: "JSON con escenas"
+        required: true
+permissions:
+  contents: write
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar dependencias
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          pip install -q edge-tts gTTS pillow
+      - name: Guardar trabajo
+        env:
+          JOB: ${{ inputs.job }}
+        run: printf '%s' "$JOB" > job.json
+      - name: Renderizar
+        run: python3 render.py job.json video.mp4
+      - name: Publicar resultado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.job_id }}
+        run: gh release create "$TAG" video.mp4 --title "$TAG" --notes "video automatico"
