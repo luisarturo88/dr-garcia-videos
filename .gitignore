@@ -1,0 +1,5 @@
+__pycache__/
+work/
+*.mp4
+cover_*.jpg
+job.json
