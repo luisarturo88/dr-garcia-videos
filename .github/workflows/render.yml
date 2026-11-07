@@ -26,9 +26,20 @@ jobs:
           JOB: ${{ inputs.job }}
         run: printf '%s' "$JOB" > job.json
       - name: Renderizar
+        env:
+          # Clave de Pexels guardada como secreto del repo (Settings > Secrets > Actions); nunca en n8n
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python3 render.py job.json video.mp4
       - name: Publicar resultado
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.job_id }}
         run: gh release create "$TAG" video.mp4 --title "$TAG" --notes "video automatico"
+      # Las portadas se suben DESPUES del video para que assets[0] siga siendo video.mp4 (lo espera la fabrica de hurones)
+      - name: Subir portadas
+        if: hashFiles('cover_h.jpg') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.job_id }}
+        run: gh release upload "$TAG" cover_h.jpg cover_v.jpg --clobber

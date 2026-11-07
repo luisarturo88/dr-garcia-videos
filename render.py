@@ -11,7 +11,9 @@ Entrada: job.json  ->  Salida: out.mp4
   }
 Usa: edge-tts (voz neuronal gratis), ffmpeg, Pillow.
 """
-import asyncio, json, os, subprocess, sys, textwrap, urllib.request, shutil, math
+import asyncio, json, os, subprocess, sys, textwrap, urllib.request, urllib.parse, shutil, math, time
+
+import covers
 
 FAKE_TTS = os.environ.get("FAKE_TTS") == "1"
 W_V, H_V = 1080, 1920
@@ -144,6 +146,58 @@ def make_overlay(W, H, blog, path):
     ov.save(path)
 
 
+def pexels_url(query, vertical, used):
+    """Busca una foto en Pexels con la clave guardada como secreto de GitHub (PEXELS_API_KEY)."""
+    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    if not key or not query:
+        return None
+    orient = "portrait" if vertical else "landscape"
+    url = "https://api.pexels.com/v1/search?" + urllib.parse.urlencode({"query": query, "per_page": 8, "orientation": orient})
+    try:
+        req = urllib.request.Request(url, headers={"Authorization": key, "User-Agent": "Mozilla/5.0"})
+        data = json.load(urllib.request.urlopen(req, timeout=40))
+    except Exception as e:
+        sys.stderr.write(f"pexels falló para '{query}': {e}\n")
+        return None
+    w, h = (W_V, H_V) if vertical else (W_H, H_H)
+    for p in data.get("photos", []):
+        if p["id"] in used:
+            continue
+        used.add(p["id"])
+        return f"{p['src']['original']}?auto=compress&cs=tinysrgb&fit=crop&w={w}&h={h}"
+    return None
+
+
+def fallback_image(path, W, H):
+    """Fondo degradado si no hay foto: el render nunca se cae por una imagen."""
+    from PIL import Image
+    im = Image.new("RGB", (1, H))
+    for y in range(H):
+        t = y / H
+        im.putpixel((0, y), (int(10 + 20 * t), int(90 - 50 * t), int(100 - 60 * t)))
+    im.resize((W, H)).save(path, "JPEG", quality=90)
+
+
+def get_image(sc, path, vertical, used):
+    """Usa image_url si viene; si trae image_query la busca en Pexels; si todo falla, degradado."""
+    W, H = (W_V, H_V) if vertical else (W_H, H_H)
+    url = sc.get("image_url") or pexels_url(sc.get("image_query"), vertical, used)
+    for intento in range(3):
+        if not url:
+            break
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as f:
+                f.write(r.read())
+            if os.path.getsize(path) > 2000:
+                return
+        except Exception as e:
+            sys.stderr.write(f"imagen intento {intento + 1} falló: {e}\n")
+            time.sleep(2)
+    sys.stderr.write("usando imagen de respaldo\n")
+    fallback_image(path, W, H)
+
+
 def main(job_path, out_path):
     job = json.load(open(job_path, encoding="utf-8"))
     vertical = job.get("orientation", "vertical") == "vertical"
@@ -154,11 +208,10 @@ def main(job_path, out_path):
     shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)
 
     all_words, clips, audios, t0 = [], [], [], 0.0
+    used_photos = set()
     for i, sc in enumerate(job["scenes"]):
         img = f"{tmp}/img{i}.jpg"; mp3 = f"{tmp}/a{i}.mp3"; clip = f"{tmp}/c{i}.mp4"
-        req = urllib.request.Request(sc["image_url"], headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=60) as r, open(img, "wb") as f:
-            f.write(r.read())
+        get_image(sc, img, vertical, used_photos)
         words = tts(sc["text"], voice, mp3)
         d = dur(mp3) + 0.25
         all_words += [(a + t0, b + t0, w) for a, b, w in words]
@@ -181,10 +234,23 @@ def main(job_path, out_path):
 
     build_ass(all_words, W, H, f"{tmp}/subs.ass")
     make_overlay(W, H, blog, f"{tmp}/overlay.png")
-    sh(["ffmpeg", "-y", "-i", joined, "-i", f"{tmp}/overlay.png",
-        "-filter_complex", f"[0:v][1:v]overlay=0:0,ass={tmp}/subs.ass[v]",
+    # Gancho en pantalla (texto enorme los primeros 3 s) y portadas: solo si el trabajo trae "cover.text"
+    cover_text = str((job.get("cover") or {}).get("text") or "").strip()
+    hook = None
+    if cover_text and vertical:
+        hook = f"{tmp}/hook.png"
+        covers.hook_overlay(cover_text.upper(), W, H, hook)
+    inputs = ["-i", joined, "-i", f"{tmp}/overlay.png"] + (["-i", hook] if hook else [])
+    fc = (f"[0:v][1:v]overlay=0:0[a];[a][2:v]overlay=0:0:enable='lt(t,3)',ass={tmp}/subs.ass[v]" if hook
+          else f"[0:v][1:v]overlay=0:0,ass={tmp}/subs.ass[v]")
+    sh(["ffmpeg", "-y"] + inputs + ["-filter_complex", fc,
         "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-preset", "medium", "-crf", "21",
         "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", out_path])
+    if cover_text:
+        try:
+            covers.make_covers(f"{tmp}/img0.jpg", cover_text, os.path.dirname(os.path.abspath(out_path)), blog)
+        except Exception as e:  # la portada nunca debe tumbar un video ya renderizado
+            sys.stderr.write(f"portada no generada: {e}\n")
     print(json.dumps({"ok": True, "duration": round(dur(out_path), 2), "file": out_path}))
 
 
