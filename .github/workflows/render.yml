@@ -15,7 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      # Sin acciones externas: el repo exige acciones fijadas por SHA, así que se clona con git
+      - name: Descargar código
+        run: git clone --depth 1 "https://github.com/${{ github.repository }}.git" .
       - name: Instalar dependencias
         run: |
           sudo apt-get update -qq
