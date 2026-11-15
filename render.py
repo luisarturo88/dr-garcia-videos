@@ -218,11 +218,11 @@ def main(job_path, out_path):
         t0 += d
         frames = int(d * 30)
         # imagen que llena toda la pantalla (cover) + zoom lento (Ken Burns)
-        vf = (f"scale={W*2}:{H*2}:force_original_aspect_ratio=increase,crop={W*2}:{H*2},"
+        vf = (f"scale={W*2}:{H*2}:force_original_aspect_ratio=increase:flags=lanczos,crop={W*2}:{H*2},"
               f"zoompan=z='min(1+0.0009*on,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={W}x{H}:fps=30,"
               f"format=yuv420p")
         sh(["ffmpeg", "-y", "-loop", "1", "-i", img, "-i", mp3, "-vf", vf, "-af", "apad",
-            "-t", f"{d:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-t", f"{d:.2f}", "-c:v", "libx264", "-preset", "fast", "-crf", "14",
             "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2", clip])
         clips.append(clip)
 
@@ -244,8 +244,9 @@ def main(job_path, out_path):
     fc = (f"[0:v][1:v]overlay=0:0[a];[a][2:v]overlay=0:0:enable='lt(t,3)',ass={tmp}/subs.ass[v]" if hook
           else f"[0:v][1:v]overlay=0:0,ass={tmp}/subs.ass[v]")
     sh(["ffmpeg", "-y"] + inputs + ["-filter_complex", fc,
-        "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-preset", "medium", "-crf", "21",
-        "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", out_path])
+        "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-level", "4.2",
+        "-pix_fmt", "yuv420p", "-r", "30", "-g", "60", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-movflags", "+faststart", out_path])
     if cover_text:
         try:
             covers.make_covers(f"{tmp}/img0.jpg", cover_text, os.path.dirname(os.path.abspath(out_path)), blog)
