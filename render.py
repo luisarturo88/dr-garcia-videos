@@ -106,6 +106,37 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.write(head + "\n".join(lines) + "\n")
 
 
+def srt_time(t):
+    ms = int(round(t * 1000)); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def write_srt(all_words, path, per=8):
+    """Subtítulos en archivo (SEO de YouTube y para reutilizar el video en otras redes)."""
+    out = []
+    for n, i in enumerate(range(0, len(all_words), per), 1):
+        grp = all_words[i:i + per]
+        out.append(f"{n}\n{srt_time(grp[0][0])} --> {srt_time(grp[-1][1])}\n{' '.join(w for _, _, w in grp)}\n")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+
+
+def write_chapters(chapters, total, path):
+    """Capítulos de YouTube: el primero en 0:00, mínimo 3 y cada uno de al menos 10 s. Si no se cumplen, no se escribe."""
+    limpios = []
+    for t, title in chapters:
+        if limpios and t - limpios[-1][0] < 10:
+            continue
+        limpios.append((t, title))
+    if limpios:
+        limpios[0] = (0.0, limpios[0][1])
+    if len(limpios) < 3 or total < 60:
+        return
+    fmt = lambda t: (f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{int(t % 60):02d}" if total >= 3600 else f"{int(t // 60)}:{int(t % 60):02d}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(f"{fmt(t)} {title}" for t, title in limpios) + "\n")
+
+
 def make_overlay(W, H, blog, path):
     """Capa fija: franja con nombre del doctor + foto del doctor + blog."""
     from PIL import Image, ImageDraw, ImageFont
@@ -259,8 +290,12 @@ def main(job_path, out_path):
 
     all_words, clips, audios, t0 = [], [], [], 0.0
     used_photos = set()
+    chapters = []  # (segundo de inicio, título) para los capítulos de YouTube
     for i, sc in enumerate(job["scenes"]):
         img = f"{tmp}/img{i}.jpg"; mp3 = f"{tmp}/a{i}.mp3"; clip = f"{tmp}/c{i}.mp4"
+        cap = str(sc.get("chapter") or "").strip()
+        if cap and (not chapters or chapters[-1][1] != cap):
+            chapters.append((t0, cap[:60]))
         get_image(sc, img, vertical, used_photos)
         words = tts(sc["text"], voice, mp3)
         d = dur(mp3) + 0.25
@@ -283,6 +318,9 @@ def main(job_path, out_path):
     sh(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", f"{tmp}/list.txt", "-c", "copy", joined])
 
     build_ass(all_words, W, H, f"{tmp}/subs.ass")
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    write_srt(all_words, os.path.join(out_dir, "subtitles.srt"))
+    write_chapters(chapters, t0, os.path.join(out_dir, "chapters.txt"))
     make_overlay(W, H, blog, f"{tmp}/overlay.png")
     # Gancho en pantalla (texto enorme los primeros 3 s) y portadas: solo si el trabajo trae "cover.text"
     cover_text = str((job.get("cover") or {}).get("text") or "").strip()

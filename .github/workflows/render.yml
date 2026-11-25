@@ -45,3 +45,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.job_id }}
         run: gh release upload "$TAG" cover_h.jpg cover_v.jpg --clobber
+      # Subtítulos (.srt) y capítulos (chapters.txt) para SEO de YouTube y para reutilizar el video en otras redes
+      - name: Subir subtítulos y capítulos
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.job_id }}
+        run: |
+          for f in subtitles.srt chapters.txt; do
+            if [ -f "$f" ]; then gh release upload "$TAG" "$f" --clobber; fi
+          done
