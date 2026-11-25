@@ -12,8 +12,11 @@ import os
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
-FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+# Anton (licencia OFL, incluida en assets): letra condensada y gruesa, la más usada en miniaturas que se leen en el móvil.
+FONT_BOLD = os.path.join(ASSETS, "Anton-Regular.ttf")
+if not os.path.exists(FONT_BOLD):
+    FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 YELLOW, WHITE, RED, BLACK = (255, 230, 0), (255, 255, 255), (255, 60, 60), (0, 0, 0)
 
 
@@ -50,17 +53,19 @@ def _fit(draw, text, box_w, box_h, max_size, max_lines=3, spacing=0.08):
     return ImageFont.truetype(FONT_BOLD, size), lines
 
 
-def _draw_block(img, lines, font, x, y, box_w, align="left", colors=(YELLOW, WHITE, RED), spacing=0.08):
+def _draw_block(img, lines, font, x, y, box_w, align="left", colors=None, spacing=0.08):
     """Texto grande con contorno negro grueso y sombra. Devuelve la 'y' final."""
     d = ImageDraw.Draw(img)
     size = font.size
-    sw = max(2, int(size * 0.11))
+    sw = max(2, int(size * 0.09))
+    if colors is None:  # una sola línea: amarilla; varias: la primera blanca y el remate en amarillo
+        colors = (YELLOW,) if len(lines) == 1 else (WHITE,) + (YELLOW,) * (len(lines) - 1)
     cy = y
     for i, line in enumerate(lines):
         w = d.textlength(line, font=font)
         px = x if align == "left" else x + (box_w - w) / 2
         d.text((px + sw * 0.8, cy + sw * 0.8), line, font=font, fill=(0, 0, 0), stroke_width=sw, stroke_fill=(0, 0, 0))
-        d.text((px, cy), line, font=font, fill=colors[i % len(colors)], stroke_width=sw, stroke_fill=BLACK)
+        d.text((px, cy), line, font=font, fill=colors[min(i, len(colors) - 1)], stroke_width=sw, stroke_fill=BLACK)
         cy += size * (1 + spacing)
     return cy
 
@@ -105,30 +110,30 @@ def hook_overlay(text, W, H, path):
     block_h = len(lines) * f.size * 1.08
     y = H * 0.20
     d.rounded_rectangle([36, y - 34, W - 36, y + block_h + 26], radius=44, fill=(0, 0, 0, 120))
-    _draw_block(ov, lines, f, 0, y, W, align="center", colors=(YELLOW, WHITE, YELLOW))
+    _draw_block(ov, lines, f, 0, y, W, align="center")
     ov.save(path)
 
 
 def cover_horizontal(photo, text, path, blog):
+    """Miniatura 1280x720: foto del animal a la derecha, 2-4 palabras enormes a la izquierda,
+    cara del Dr. García (marca reconocible) y borde amarillo para destacar entre otras miniaturas."""
     W, H = 1280, 720
-    base = ImageOps.fit(_enhance(photo.convert("RGB")), (W, H), Image.LANCZOS, centering=(0.5, 0.38))
-    # velo oscuro a la izquierda para que el texto resalte sobre cualquier foto
+    base = ImageOps.fit(_enhance(photo.convert("RGB")), (W, H), Image.LANCZOS, centering=(0.62, 0.38))
+    # velo oscuro a la izquierda para que el texto se lea sobre cualquier foto
     mask = Image.new("L", (W, 1))
     for x in range(W):
-        a = 235 if x < W * 0.28 else int(max(0, 235 * (1 - (x - W * 0.28) / (W * 0.42))))
+        a = 240 if x < W * 0.34 else int(max(0, 240 * (1 - (x - W * 0.34) / (W * 0.30))))
         mask.putpixel((x, 0), a)
     base = Image.composite(Image.new("RGB", (W, H), (8, 8, 22)), base, mask.resize((W, H)))
     d = ImageDraw.Draw(base)
-    # círculo rojo que señala al protagonista de la foto
-    cx, cy, rx, ry = int(W * 0.72), int(H * 0.46), int(W * 0.17), int(H * 0.36)
-    for g, col in ((22, (120, 0, 0)), (14, (230, 20, 20))):
-        d.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], outline=col, width=g)
-    f, lines = _fit(d, text, W * 0.55, H * 0.64, 230, max_lines=3)
-    _draw_block(base, lines, f, 42, 46, W * 0.55)
-    av = _badge(170)
-    base.paste(av, (30, H - av.height - 26), av)
-    _ribbon(base, 30 + av.width + 12, H - av.height - 26 + (av.height - 62) // 2, blog, 30)
-    base.save(path, "JPEG", quality=90, optimize=True)
+    f, lines = _fit(d, text, W * 0.56, H * 0.62, 260, max_lines=3, spacing=0.02)
+    block_h = len(lines) * f.size * 1.02
+    _draw_block(base, lines, f, 44, max(36, (H * 0.68 - block_h) / 2), W * 0.56, spacing=0.02)
+    av = _badge(190)
+    base.paste(av, (30, H - av.height - 24), av)
+    _ribbon(base, 30 + av.width + 12, H - av.height - 24 + (av.height - 62) // 2, blog, 30)
+    d.rectangle([0, 0, W - 1, H - 1], outline=(255, 193, 7), width=10)
+    base.save(path, "JPEG", quality=92, optimize=True)
 
 
 def cover_vertical(photo, text, path, blog):
@@ -141,8 +146,8 @@ def cover_vertical(photo, text, path, blog):
         mask.putpixel((0, y), int(min(1.0, t) * 235))
     base = Image.composite(Image.new("RGB", (W, H), (6, 6, 20)), base, mask.resize((W, H)))
     d = ImageDraw.Draw(base)
-    f, lines = _fit(d, text, W * 0.90, H * 0.30, 250, max_lines=3)
-    _draw_block(base, lines, f, 0, H * 0.52, W, align="center", colors=(YELLOW, WHITE, RED))
+    f, lines = _fit(d, text, W * 0.90, H * 0.30, 280, max_lines=3, spacing=0.02)
+    _draw_block(base, lines, f, 0, H * 0.52, W, align="center", spacing=0.02)
     d.rectangle([0, 0, W, 110], fill=(0, 105, 92))
     ft = ImageFont.truetype(FONT_BOLD, 40)
     t1 = "Dr. Luis Arturo García · Médico Veterinario"
