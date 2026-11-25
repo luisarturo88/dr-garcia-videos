@@ -358,7 +358,14 @@ def main(job_path, out_path):
         "-pix_fmt", "yuv420p"] + acodec + ["-movflags", "+faststart", out_path])
     if cover_text:
         try:
-            covers.make_covers(f"{tmp}/img0.jpg", cover_text, os.path.dirname(os.path.abspath(out_path)), blog)
+            cv = job.get("cover") or {}
+            n = len(job["scenes"])
+            # Fotograma de contexto: otra escena del video (por defecto la 2.ª en shorts, la del medio en largos)
+            k = cv.get("frame")
+            k = int(k) if str(k).lstrip("-").isdigit() else (1 if vertical else n // 2)
+            inset = f"{tmp}/img{k}.jpg" if 0 < k < n and os.path.exists(f"{tmp}/img{k}.jpg") else None
+            covers.make_covers(f"{tmp}/img0.jpg", cover_text, os.path.dirname(os.path.abspath(out_path)), blog,
+                               inset=inset, label=str(cv.get("label") or "").strip())
         except Exception as e:  # la portada nunca debe tumbar un video ya renderizado
             sys.stderr.write(f"portada no generada: {e}\n")
     print(json.dumps({"ok": True, "duration": round(dur(out_path), 2), "file": out_path}))

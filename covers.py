@@ -102,6 +102,45 @@ def _ribbon(img, x, y, label, size):
     return w
 
 
+def _inset(img_path, w, h, angle):
+    """Fotograma de otra escena, con marco blanco y sombra (da contexto: 'qué pasa en el video')."""
+    fr = ImageOps.fit(_enhance(Image.open(img_path).convert("RGB")), (w, h), Image.LANCZOS)
+    b = max(6, w // 40)
+    card = Image.new("RGBA", (w + 2 * b, h + 2 * b), (255, 255, 255, 255))
+    card.paste(fr, (b, b))
+    card = card.rotate(angle, expand=True, resample=Image.BICUBIC)
+    sh = Image.new("RGBA", card.size, (0, 0, 0, 0))
+    sh.paste((0, 0, 0, 140), mask=card.split()[3])
+    sh = sh.filter(ImageFilter.GaussianBlur(10))
+    out = Image.new("RGBA", (card.width + 16, card.height + 16), (0, 0, 0, 0))
+    out.alpha_composite(sh, (12, 14))
+    out.alpha_composite(card, (0, 0))
+    return out
+
+
+def _arrow(d, x1, y1, x2, y2, width):
+    """Flecha roja gruesa con contorno blanco de (x1,y1) a (x2,y2)."""
+    import math
+    ang = math.atan2(y2 - y1, x2 - x1)
+    L = width * 2.6
+    tip = [(x2, y2), (x2 - L * math.cos(ang - 0.5), y2 - L * math.sin(ang - 0.5)), (x2 - L * math.cos(ang + 0.5), y2 - L * math.sin(ang + 0.5))]
+    bx, by = x2 - L * 0.8 * math.cos(ang), y2 - L * 0.8 * math.sin(ang)
+    d.line([(x1, y1), (bx, by)], fill=WHITE, width=width + 8)
+    d.polygon([(px + 0, py) for px, py in tip], fill=WHITE, outline=WHITE, width=6)
+    d.line([(x1, y1), (bx, by)], fill=(230, 20, 20), width=width)
+    d.polygon(tip, fill=(230, 20, 20))
+
+
+def _label(img, x, y, text, size):
+    """Etiqueta roja pequeña (ej. CASO REAL) sobre el texto principal."""
+    d = ImageDraw.Draw(img)
+    f = ImageFont.truetype(FONT_BOLD, size)
+    w = d.textlength(text, font=f)
+    d.rectangle([x, y, x + w + size * 0.8, y + size * 1.35], fill=(220, 20, 20))
+    d.text((x + size * 0.4, y + size * 0.12), text, font=f, fill=WHITE)
+    return y + size * 1.35
+
+
 def hook_overlay(text, W, H, path):
     """Texto-gancho enorme que aparece en los primeros segundos del short."""
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -114,7 +153,7 @@ def hook_overlay(text, W, H, path):
     ov.save(path)
 
 
-def cover_horizontal(photo, text, path, blog):
+def cover_horizontal(photo, text, path, blog, inset=None, label=""):
     """Miniatura 1280x720: foto del animal a la derecha, 2-4 palabras enormes a la izquierda,
     cara del Dr. García (marca reconocible) y borde amarillo para destacar entre otras miniaturas."""
     W, H = 1280, 720
@@ -126,9 +165,21 @@ def cover_horizontal(photo, text, path, blog):
         mask.putpixel((x, 0), a)
     base = Image.composite(Image.new("RGB", (W, H), (8, 8, 22)), base, mask.resize((W, H)))
     d = ImageDraw.Draw(base)
-    f, lines = _fit(d, text, W * 0.56, H * 0.62, 260, max_lines=3, spacing=0.02)
-    block_h = len(lines) * f.size * 1.02
-    _draw_block(base, lines, f, 44, max(36, (H * 0.68 - block_h) / 2), W * 0.56, spacing=0.02)
+    top = 36
+    if label:
+        top = _label(base, 44, 30, label.upper()[:22], 40) + 10
+    limite = H - 190 - 16 - 24 - 14  # el texto termina antes de la foto del doctor
+    f, lines = _fit(d, text, W * 0.56, limite - top, 260, max_lines=3, spacing=0.02)
+    block_h = len(lines) * f.size * 1.02 + f.size * 0.2
+    _draw_block(base, lines, f, 44, max(top, min((limite + top - block_h) / 2, limite - block_h)), W * 0.56, spacing=0.02)
+    if inset:
+        try:
+            card = _inset(inset, 330, 220, -4)
+            cx, cy = W - card.width - 34, H - card.height - 30
+            base.paste(card, (cx, cy), card)
+            _arrow(ImageDraw.Draw(base), cx - 150, cy - 70, cx - 6, cy + 40, 16)
+        except Exception:
+            pass
     av = _badge(190)
     base.paste(av, (30, H - av.height - 24), av)
     _ribbon(base, 30 + av.width + 12, H - av.height - 24 + (av.height - 62) // 2, blog, 30)
@@ -136,7 +187,7 @@ def cover_horizontal(photo, text, path, blog):
     base.save(path, "JPEG", quality=92, optimize=True)
 
 
-def cover_vertical(photo, text, path, blog):
+def cover_vertical(photo, text, path, blog, inset=None, label=""):
     W, H = 1080, 1920
     base = ImageOps.fit(_enhance(photo.convert("RGB")), (W, H), Image.LANCZOS, centering=(0.5, 0.4))
     # degradado oscuro en el tercio inferior para el texto
@@ -147,7 +198,17 @@ def cover_vertical(photo, text, path, blog):
     base = Image.composite(Image.new("RGB", (W, H), (6, 6, 20)), base, mask.resize((W, H)))
     d = ImageDraw.Draw(base)
     f, lines = _fit(d, text, W * 0.90, H * 0.30, 280, max_lines=3, spacing=0.02)
+    if label:
+        lf = ImageFont.truetype(FONT_BOLD, 54)
+        lw = d.textlength(label.upper()[:22], font=lf) + 44
+        _label(base, (W - lw) / 2, H * 0.52 - 100, label.upper()[:22], 54)
     _draw_block(base, lines, f, 0, H * 0.52, W, align="center", spacing=0.02)
+    if inset:
+        try:
+            card = _inset(inset, 380, 380, 5)
+            base.paste(card, (W - card.width - 40, 150), card)
+        except Exception:
+            pass
     d.rectangle([0, 0, W, 110], fill=(0, 105, 92))
     ft = ImageFont.truetype(FONT_BOLD, 40)
     t1 = "Dr. Luis Arturo García · Médico Veterinario"
@@ -158,12 +219,12 @@ def cover_vertical(photo, text, path, blog):
     base.save(path, "JPEG", quality=90, optimize=True)
 
 
-def make_covers(img_path, text, out_dir, blog):
+def make_covers(img_path, text, out_dir, blog, inset=None, label=""):
     """Crea cover_h.jpg y cover_v.jpg a partir de la foto principal. Devuelve las rutas."""
     photo = Image.open(img_path)
     text = " ".join(str(text or "").upper().split())
     h = os.path.join(out_dir, "cover_h.jpg")
     v = os.path.join(out_dir, "cover_v.jpg")
-    cover_horizontal(photo, text, h, blog)
-    cover_vertical(photo, text, v, blog)
+    cover_horizontal(photo, text, h, blog, inset, label)
+    cover_vertical(photo, text, v, blog, inset, label)
     return h, v
