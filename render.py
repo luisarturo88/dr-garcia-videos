@@ -146,6 +146,56 @@ def make_overlay(W, H, blog, path):
     ov.save(path)
 
 
+# --- Música de fondo -------------------------------------------------------------
+# Se SINTETIZA con ffmpeg (acordes suaves con reverb): sin licencias, sin reclamos de
+# Content ID y sin descargar nada. Baja sola cuando habla la voz (sidechain "ducking").
+# job["music"]: "suave" (por defecto) | "misterio" (Caso Abierto) | "none" (sin música)
+MOODS = {
+    # 4 acordes x 8 s (frecuencias de las 3 notas de cada acorde, en Hz)
+    "suave":    [(220.00, 277.18, 329.63), (196.00, 246.94, 293.66), (174.61, 220.00, 261.63), (196.00, 246.94, 329.63)],
+    "misterio": [(110.00, 130.81, 164.81), (110.00, 130.81, 155.56), (87.31, 110.00, 130.81), (82.41, 103.83, 123.47)],
+}
+
+
+def _chord_expr(notes, step):
+    """Expresión aevalsrc que cambia de acorde cada `step` segundos con entrada/salida suave."""
+    k = len(notes)
+    def freq(i):  # frecuencia de la nota i del acorde que suena en el instante t
+        e = str(notes[-1][i])
+        for j in range(k - 2, -1, -1):
+            e = f"if(lt(mod(t,{k*step}),{(j+1)*step}),{notes[j][i]},{e})"
+        return e
+    env = f"(0.5-0.5*cos(2*PI*mod(t,{step})/{step}))"
+    voces = "+".join(f"sin(2*PI*({freq(i)})*t)" for i in range(3))
+    return f"0.22*{env}*({voces})"
+
+
+def make_music(path, seconds, mood):
+    notes = MOODS.get(mood, MOODS["suave"])
+    expr = _chord_expr(notes, 8)
+    if mood == "misterio":
+        # latido grave cada 2 s (tensión tipo serie policial)
+        expr += "+0.35*exp(-9*mod(t,2))*sin(2*PI*55*t)"
+    sh(["ffmpeg", "-y", "-f", "lavfi", "-i", f"aevalsrc='{expr}':s=44100:d={seconds:.2f}",
+        "-af", "lowpass=f=1800,aecho=0.8:0.7:120|260:0.35|0.22,afade=t=in:d=3,"
+               f"afade=t=out:st={max(seconds-4, 0):.2f}:d=4,aformat=channel_layouts=stereo",
+        "-ar", "44100", "-c:a", "pcm_s16le", path])
+
+
+def title_card(W, H, text1, text2, path):
+    """Rótulo de serie (primeros segundos): CASO ABIERTO + subtítulo."""
+    from PIL import Image, ImageDraw, ImageFont
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(ov)
+    d.rectangle([0, int(H * 0.36), W, int(H * 0.64)], fill=(0, 0, 0, 190))
+    f1 = ImageFont.truetype(FONT_BOLD, int(H * (0.085 if W > H else 0.05)))
+    f2 = ImageFont.truetype(FONT_BOLD, int(H * (0.038 if W > H else 0.024)))
+    for txt, f, y, col in ((text1, f1, 0.40, (255, 193, 7, 255)), (text2, f2, 0.53, (255, 255, 255, 255))):
+        tw = d.textlength(txt, font=f)
+        d.text(((W - tw) / 2, H * y), txt, font=f, fill=col)
+    ov.save(path)
+
+
 def pexels_url(query, vertical, used):
     """Busca una foto en Pexels con la clave guardada como secreto de GitHub (PEXELS_API_KEY)."""
     key = os.environ.get("PEXELS_API_KEY", "").strip()
@@ -240,12 +290,34 @@ def main(job_path, out_path):
     if cover_text and vertical:
         hook = f"{tmp}/hook.png"
         covers.hook_overlay(cover_text.upper(), W, H, hook)
-    inputs = ["-i", joined, "-i", f"{tmp}/overlay.png"] + (["-i", hook] if hook else [])
-    fc = (f"[0:v][1:v]overlay=0:0[a];[a][2:v]overlay=0:0:enable='lt(t,3)',ass={tmp}/subs.ass[v]" if hook
-          else f"[0:v][1:v]overlay=0:0,ass={tmp}/subs.ass[v]")
+    inputs = ["-i", joined, "-i", f"{tmp}/overlay.png"]
+    fc = "[0:v][1:v]overlay=0:0[v0]"; last = "v0"
+    if hook:
+        inputs += ["-i", hook]; n = len(inputs) // 2 - 1
+        fc += f";[{last}][{n}:v]overlay=0:0:enable='lt(t,3)'[v1]"; last = "v1"
+    # Rótulo de serie (p. ej. CASO ABIERTO · Expedientes del Dr. García) los primeros 5 s
+    serie = job.get("series") or {}
+    if serie.get("title"):
+        card = f"{tmp}/card.png"
+        title_card(W, H, str(serie["title"]), str(serie.get("subtitle", "")), card)
+        inputs += ["-i", card]; n = len(inputs) // 2 - 1
+        fc += f";[{last}][{n}:v]overlay=0:0:enable='lt(t,5)'[v2]"; last = "v2"
+    fc += f";[{last}]ass={tmp}/subs.ass[v]"
+    mood = str(job.get("music") or ("misterio" if serie.get("title") else "suave")).lower()
+    if mood != "none":
+        music = f"{tmp}/music.wav"
+        make_music(music, t0 + 1, mood)
+        inputs += ["-i", music]; n = len(inputs) // 2 - 1
+        vol = 0.30 if vertical else 0.24  # música bajita (~18 dB bajo la voz); la voz manda
+        fc += (f";[0:a]asplit=2[voz][sc];[{n}:a]volume={vol}[m];"
+               f"[m][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=450[mb];"
+               f"[voz][mb]amix=inputs=2:duration=first:normalize=0[aout]")
+        amap, acodec = "[aout]", ["-c:a", "aac", "-b:a", "160k"]
+    else:
+        amap, acodec = "0:a", ["-c:a", "copy"]
     sh(["ffmpeg", "-y"] + inputs + ["-filter_complex", fc,
-        "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-preset", "medium", "-crf", "21",
-        "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", out_path])
+        "-map", "[v]", "-map", amap, "-c:v", "libx264", "-preset", "medium", "-crf", "21",
+        "-pix_fmt", "yuv420p"] + acodec + ["-movflags", "+faststart", out_path])
     if cover_text:
         try:
             covers.make_covers(f"{tmp}/img0.jpg", cover_text, os.path.dirname(os.path.abspath(out_path)), blog)
