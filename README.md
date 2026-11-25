@@ -24,7 +24,7 @@ Renderizador automático (GitHub Actions + ffmpeg + edge-tts) usado por n8n. Cos
 ## Música de fondo y rótulo de serie (opcionales)
 - `music`: `"suave"` (por defecto), `"misterio"` o `"none"`. La música se sintetiza con ffmpeg
   (sin licencias ni reclamos de Content ID) y baja sola cuando habla la voz.
-- `series`: `{"title": "CASO ABIERTO", "subtitle": "Expedientes del Dr. García · El caso de Luna"}`
+- `series`: `{"title": "EXPEDIENTES DEL DR. GARCÍA", "subtitle": "Misterios médicos veterinarios · El caso de Luna"}`
   muestra el rótulo de la serie los primeros 5 s y, si no se indica `music`, usa `"misterio"`.
 
 ## Secretos del repo

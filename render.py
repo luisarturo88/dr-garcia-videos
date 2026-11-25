@@ -149,7 +149,7 @@ def make_overlay(W, H, blog, path):
 # --- Música de fondo -------------------------------------------------------------
 # Se SINTETIZA con ffmpeg (acordes suaves con reverb): sin licencias, sin reclamos de
 # Content ID y sin descargar nada. Baja sola cuando habla la voz (sidechain "ducking").
-# job["music"]: "suave" (por defecto) | "misterio" (Caso Abierto) | "none" (sin música)
+# job["music"]: "suave" (por defecto) | "misterio" (Expedientes del Dr. García) | "none" (sin música)
 MOODS = {
     # 4 acordes x 8 s (frecuencias de las 3 notas de cada acorde, en Hz)
     "suave":    [(220.00, 277.18, 329.63), (196.00, 246.94, 293.66), (174.61, 220.00, 261.63), (196.00, 246.94, 329.63)],
@@ -183,7 +183,7 @@ def make_music(path, seconds, mood):
 
 
 def title_card(W, H, text1, text2, path):
-    """Rótulo de serie (primeros segundos): CASO ABIERTO + subtítulo."""
+    """Rótulo de serie (primeros segundos): título + subtítulo."""
     from PIL import Image, ImageDraw, ImageFont
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
@@ -295,7 +295,7 @@ def main(job_path, out_path):
     if hook:
         inputs += ["-i", hook]; n = len(inputs) // 2 - 1
         fc += f";[{last}][{n}:v]overlay=0:0:enable='lt(t,3)'[v1]"; last = "v1"
-    # Rótulo de serie (p. ej. CASO ABIERTO · Expedientes del Dr. García) los primeros 5 s
+    # Rótulo de serie (p. ej. EXPEDIENTES DEL DR. GARCÍA) los primeros 5 s
     serie = job.get("series") or {}
     if serie.get("title"):
         card = f"{tmp}/card.png"
