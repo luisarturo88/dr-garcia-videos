@@ -34,10 +34,14 @@ def dur(path):
     return float(sh(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path]).strip())
 
 
+# Ritmo y tono de la voz (los personajes tiernos usan un tono más agudo: job["voice_pitch"] = "+25Hz")
+VOZ = {"rate": "+6%", "pitch": "+0Hz"}
+
+
 async def tts_edge(text, voice, mp3):
     import edge_tts
     words = []
-    comm = edge_tts.Communicate(text, voice, rate="+6%", boundary="WordBoundary")
+    comm = edge_tts.Communicate(text, voice, rate=VOZ["rate"], pitch=VOZ["pitch"], boundary="WordBoundary")
     with open(mp3, "wb") as f:
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
@@ -284,6 +288,8 @@ def main(job_path, out_path):
     vertical = job.get("orientation", "vertical") == "vertical"
     W, H = (W_V, H_V) if vertical else (W_H, H_H)
     voice = job.get("voice", "es-EC-LuisNeural")
+    VOZ["rate"] = str(job.get("voice_rate") or "+6%")
+    VOZ["pitch"] = str(job.get("voice_pitch") or "+0Hz")
     blog = job.get("blog_url", "veterinarioluis.com")
     tmp = "work"
     shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp)
