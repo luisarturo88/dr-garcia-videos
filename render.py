@@ -264,21 +264,43 @@ def fallback_image(path, W, H):
 
 
 def get_image(sc, path, vertical, used):
-    """Usa image_url si viene; si trae image_query la busca en Pexels; si todo falla, degradado."""
+    """Usa image_url si viene; si trae image_query la busca en Pexels; si todo falla, degradado.
+    Las imágenes generadas con IA (pollinations) tardan y limitan peticiones seguidas: se reintenta con más espera
+    y se recorta la marca de agua de la esquina inferior."""
     W, H = (W_V, H_V) if vertical else (W_H, H_H)
     url = sc.get("image_url") or pexels_url(sc.get("image_query"), vertical, used)
-    for intento in range(3):
+    ia = bool(url) and "pollinations" in url
+    for intento in range(6 if ia else 3):
         if not url:
             break
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as f:
+            with urllib.request.urlopen(req, timeout=120 if ia else 60) as r, open(path, "wb") as f:
                 f.write(r.read())
             if os.path.getsize(path) > 2000:
+                if ia:
+                    try:
+                        from PIL import Image
+                        im = Image.open(path).convert("RGB")
+                        w, h = im.size
+                        im.crop((0, 0, w, int(h * 0.94))).save(path, "JPEG", quality=92)
+                    except Exception as e:
+                        sys.stderr.write(f"no se pudo recortar la marca: {e}\n")
                 return
         except Exception as e:
             sys.stderr.write(f"imagen intento {intento + 1} falló: {e}\n")
-            time.sleep(2)
+            time.sleep(12 * (intento + 1) if ia else 2)
+    if sc.get("image_url") and sc.get("image_query"):
+        alt = pexels_url(sc.get("image_query"), vertical, used)
+        if alt:
+            try:
+                req = urllib.request.Request(alt, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as f:
+                    f.write(r.read())
+                if os.path.getsize(path) > 2000:
+                    return
+            except Exception as e:
+                sys.stderr.write(f"respaldo Pexels falló: {e}\n")
     sys.stderr.write("usando imagen de respaldo\n")
     fallback_image(path, W, H)
 
